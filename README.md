@@ -197,3 +197,157 @@ From the repository root:
 
 ```bash
 pip install -r requirements.txt
+```
+
+`requirements.txt` contains:
+
+```text
+requests
+python-dotenv
+```
+
+### Environment configuration
+
+Create a `.env` file in the repository root (do **not** commit your real token)
+based on `.env.example`:
+
+```env
+QASE_API_TOKEN=your_qase_api_token_here
+QASE_BASE_URL=https://api.qase.io/v1
+QASE_SYNC_LOG_FILE=sync_results_errors.log
+```
+
+- `QASE_API_TOKEN` – Qase personal API token (from your user profile).
+- `QASE_BASE_URL` – API base URL (defaults to Qase cloud if not set).
+- `QASE_SYNC_LOG_FILE` – optional log file name for error logs
+  (defaults to `sync_results_errors.log`).
+
+> **Logging behavior**  
+> - **Console** – all informational messages (`[INFO]`, `[WARN]`).  
+> - **Log file** – only `ERROR` level messages, with timestamp and function name.  
+>   This is intended for debugging failures (bad token, network issues, API errors, etc.).
+
+---
+
+## Usage
+
+The main entry point is `sync_results.py`.
+
+General form:
+
+```bash
+python sync_results.py   --source-project <SOURCE_CODE>   [--source-run-id <ID> | --source-run-title "<TITLE>" | --use-latest-source-run]   --target-project <TARGET_CODE>   [--target-run-id <ID>]   [--target-run-title "<TITLE>"]   [--automation-field-title "Automation Key"]
+```
+
+- `--source-project` – project where results currently live (e.g. automation-only project).
+- `--target-project` – project where you want the mirrored results.
+- Exactly one of:
+  - `--source-run-id` – numeric run ID in the source project
+  - `--source-run-title` – run title in the source project
+  - `--use-latest-source-run` – use the latest run (by highest ID) in the source project
+- Target run:
+  - `--target-run-id` – reuse an existing run in the target project; or
+  - `--target-run-title` – run title in the target project;
+  - if neither is provided, the script defaults to using the **source run title**.
+- `--automation-field-title` – title of the custom field used as Automation Key
+  (defaults to `"Automation Key"`).
+
+---
+
+## Example: Scenario 1 (Project B → Project A)
+
+This matches the scenario described in the assignment:
+
+- **Project B** – automation-only project (CI pipeline sends results here), e.g. `AO`.
+- **Project A** – full regression suite (manual + automation), e.g. `DEMO`.
+
+### Sync the latest run from AO into DEMO
+
+```bash
+python sync_results.py   --source-project AO   --use-latest-source-run   --target-project DEMO
+```
+
+### Sync a specific run by title from AO into DEMO
+
+```bash
+python sync_results.py   --source-project AO   --source-run-title "Regression Run October 31"   --target-project DEMO   --target-run-title "Regression Run October 31"
+```
+
+In both cases:
+
+- The script uses the shared Automation Key to map cases between AO and DEMO.
+- If a case with a given Automation Key does not exist in DEMO, it is created automatically.
+- A run with the title `Regression Run October 31` is reused or created in DEMO.
+- Results (status, time, comments) are mirrored from AO into DEMO.
+
+---
+
+## Example: DEMO → AO (Demo Workspace Setup)
+
+In the demo workspace used during development, the script was also used in the
+opposite direction, treating `DEMO` as the “master” and `AO` as an automation-only mirror:
+
+```bash
+python sync_results.py   --source-project DEMO   --use-latest-source-run   --target-project AO
+```
+
+This is useful to demonstrate that the approach is symmetric: all logic is driven
+by Automation Key, not by hard-coded project codes.
+
+---
+
+## Integrating with CI (Run This Script After Each Test Run)
+
+In a real-world setup, this script would not be run manually. Instead, it would be part
+of the CI pipeline that already posts test results to Qase.
+
+Typical pattern:
+
+1. **Test runner** posts automated results to **Project B** (e.g. AO) using the official Qase reporter.  
+2. The CI job knows which Qase `run_id` it used (either by configuration or from the reporter’s output).  
+3. As the **final step in the pipeline**, the job invokes this script:
+
+   ```bash
+   python sync_results.py      --source-project AO      --source-run-id "$QASE_RUN_ID"      --target-project DEMO      --target-run-title "Regression Run ${RUN_DATE}"
+   ```
+
+   or, in a simpler demo environment:
+
+   ```bash
+   python sync_results.py      --source-project AO      --use-latest-source-run      --target-project DEMO
+   ```
+
+This ensures that every time the CI pipeline completes an automated run in Project B,
+the corresponding results are **automatically mirrored** into Project A without any
+manual copying.
+
+> **Extension idea (not implemented here):**  
+> Expose this script behind a small HTTP service and configure a Qase webhook for
+> the `run.completed` event. The webhook payload contains the `run_id`, which can
+> be passed directly to `sync_results.py` to trigger synchronization whenever
+> a run is completed in the source project.
+
+---
+
+## Limitations & Possible Extensions
+
+Current scope (for the assignment):
+
+- Only test cases with a populated Automation Key are synchronized.
+- Only status, time and comments are copied into the target run.
+- Existing results in the target run are not modified or deleted.
+- No dry-run mode (the script always writes to the target project).
+
+Potential enhancements:
+
+- Support for steps, parameters, attachments, or additional metadata.
+- A `--dry-run` flag to show planned changes without calling `POST` endpoints.
+- More advanced matching strategies (e.g. combination of Automation Key + title).
+- Aggregated summaries (e.g. counts of synced, skipped and failed results).
+- Webhook-driven automation (`run.completed`) for fully event-based syncing.
+
+---
+
+## License
+
+(Choose and add a license here, e.g. MIT, if needed.)
